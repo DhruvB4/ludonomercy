@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>LUDO NO MERCY</title>
 <!-- Google AdSense verification (put in <head>) -->
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4182657626572583"
@@ -43,14 +43,14 @@
         cursor: pointer;
     }
     .controls {
-        width: 250px;
+        width: 300px;
         background: var(--panel-color);
         padding: 20px;
         border-radius: 8px;
         box-shadow: 0 5px 15px rgba(0,0,0,0.3);
         display: flex;
         flex-direction: column;
-        gap: 15px;
+        gap: 12px;
     }
     .dice-box {
         background: rgba(0,0,0,0.2);
@@ -82,7 +82,6 @@
     }
     button:active { transform: scale(0.98); }
     button:disabled { background: #7f8c8d; cursor: not-allowed; }
-    
     .status { font-size: 14px; color: #bdc3c7; margin-bottom: 5px; }
     .current-player {
         font-size: 20px;
@@ -93,7 +92,6 @@
         gap: 10px;
     }
     .player-dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; transition: background-color 0.3s;}
-    
     .legend {
         font-size: 11px;
         background: rgba(0,0,0,0.3);
@@ -102,7 +100,6 @@
         margin-bottom: 5px;
         line-height: 1.4;
     }
-
     .log {
         height: 120px;
         overflow-y: auto;
@@ -113,6 +110,15 @@
         margin-top: 10px;
     }
     .log div { margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+    .audio-controls {
+        display:flex;
+        gap:8px;
+        align-items:center;
+        justify-content:space-between;
+    }
+    .audio-controls input[type="range"] { width: 140px; }
+    .small-btn { width: auto; padding: 8px 10px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -125,18 +131,6 @@
   <a href="privacy.html" style="color:#fff; text-decoration:none; margin:0 8px;">Privacy</a> |
   <a href="contact.html" style="color:#fff; text-decoration:none; margin:0 8px;">Contact</a>
 </div>
-<!-- TOP ad placeholder (will not show real ads until you add real slots) -->
-<div class="ad-holder" style="text-align:center; margin:8px 0; max-width:980px;">
-  <ins class="adsbygoogle" 
-       style="display:block"
-       data-ad-client="ca-pub-4182657626572583"
-       data-ad-slot="1111111111"
-       data-ad-format="auto"
-       data-full-width-responsive="true"></ins>
-  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
-</div>
-
-
 
 <div class="game-container">
     <div class="board-wrapper">
@@ -163,14 +157,142 @@
             <button id="rollBtn">ROLL DICE</button>
         </div>
 
+        <div class="audio-controls">
+            <button id="muteBtn" class="small-btn">Mute</button>
+            <label style="font-size:12px; color:#ddd">Volume</label>
+            <input id="volRange" type="range" min="0" max="1" step="0.01" value="0.7">
+        </div>
+
         <div class="log" id="gameLog"></div>
         <button id="resetBtn" style="background: #e74c3c; margin-top: auto;">New Game</button>
     </div>
 </div>
 
+<!-- OPTIONAL: If you have your own sound files, put them in a `sounds/` folder and uncomment/change src -->
+<!-- <audio id="audio-roll" src="sounds/roll.mp3" preload="auto"></audio>
+<audio id="audio-move" src="sounds/move_tick.mp3" preload="auto"></audio>
+<audio id="audio-capture" src="sounds/capture.mp3" preload="auto"></audio>
+<audio id="audio-win" src="sounds/win.mp3" preload="auto"></audio>
+<audio id="audio-click" src="sounds/click.mp3" preload="auto"></audio> -->
+
 <script>
 /**
- * CONSTANTS & CONFIG
+ * SOUND SYSTEM (WebAudio + optional audio file fallback)
+ * - Uses WebAudio tone generator if audio elements aren't present.
+ * - Requires a user gesture before WebAudio will play in some mobile browsers.
+ */
+let audioCtx = null;
+let globalGain = null;
+let muted = false;
+let volume = 0.7;
+
+function ensureAudioContext() {
+    if (audioCtx) return;
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        globalGain = audioCtx.createGain();
+        globalGain.gain.value = volume;
+        globalGain.connect(audioCtx.destination);
+    } catch(e) {
+        console.warn("WebAudio not available:", e);
+        audioCtx = null;
+    }
+}
+
+// Play a short tone (fallback)
+function playTone(freq = 440, duration = 0.08, type = 'sine') {
+    if (muted) return;
+    ensureAudioContext();
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = 0.0001;
+    o.connect(g);
+    g.connect(globalGain);
+    // small envelope
+    const now = audioCtx.currentTime;
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.15 * volume, now + 0.01);
+    o.start(now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    o.stop(now + duration + 0.02);
+}
+
+// Play a loaded <audio> element if exists, otherwise fallback to tones
+function playSound(name) {
+    if (muted) return;
+    const el = document.getElementById('audio-' + name);
+    if (el && typeof el.play === 'function') {
+        // play the audio element (set volume)
+        el.volume = volume;
+        // restart if already playing
+        el.currentTime = 0;
+        el.play().catch(()=>{ /* autoplay blocked until user gesture */ });
+        return;
+    }
+
+    // fallback tones per event
+    switch(name) {
+        case 'roll':
+            // small ascending blip
+            playTone(420, 0.06, 'triangle');
+            setTimeout(()=>playTone(520, 0.06, 'triangle'), 60);
+            break;
+        case 'move':
+            playTone(640, 0.04, 'square');
+            break;
+        case 'capture':
+            playTone(220, 0.12, 'sawtooth');
+            setTimeout(()=>playTone(160,0.12,'sawtooth'), 120);
+            break;
+        case 'win':
+            // victory triad
+            playTone(880, 0.09, 'sine');
+            setTimeout(()=>playTone(1040, 0.09, 'sine'), 90);
+            setTimeout(()=>playTone(1320, 0.18, 'sine'), 180);
+            break;
+        case 'click':
+            playTone(900, 0.03, 'square');
+            break;
+        default:
+            playTone(440, 0.04);
+    }
+}
+
+// UI Controls for mute/volume
+const muteBtn = document.getElementById('muteBtn');
+const volRange = document.getElementById('volRange');
+muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    muteBtn.innerText = muted ? 'Unmute' : 'Mute';
+});
+volRange.addEventListener('input', (e) => {
+    volume = parseFloat(e.target.value);
+    if (globalGain) globalGain.gain.value = volume;
+});
+
+// Ensure audio unlock on first user gesture so tones can play
+function unlockAudioOnGesture() {
+    const unlock = () => {
+        ensureAudioContext();
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(()=>{});
+        }
+        window.removeEventListener('click', unlock);
+        window.removeEventListener('touchstart', unlock);
+    };
+    window.addEventListener('click', unlock);
+    window.addEventListener('touchstart', unlock);
+}
+unlockAudioOnGesture();
+
+/**
+ * -----------------------
+ * ORIGINAL GAME CODE BELOW
+ * (I integrated sound calls into events)
+ * -----------------------
  */
 const CELL_SIZE = 40; 
 const PLAYERS = [
@@ -180,34 +302,26 @@ const PLAYERS = [
     { id: 3, name: 'Blue', color: '#3498db', startBase: {x:1, y:10}, startPathIdx: 30 }
 ];
 
-// 40-Tile Global Path (Skipping Corners for Diagonal Jump)
 const GLOBAL_PATH = [
-    // RED (Starts 1,6)
     {x:1,y:6}, {x:2,y:6}, {x:3,y:6}, {x:4,y:6}, {x:5,y:6}, 
     {x:6,y:5}, {x:6,y:4}, {x:6,y:3}, {x:6,y:2}, {x:6,y:1}, 
-    // GREEN (Starts 8,1)
     {x:8,y:1}, {x:8,y:2}, {x:8,y:3}, {x:8,y:4}, {x:8,y:5}, 
     {x:9,y:6}, {x:10,y:6}, {x:11,y:6}, {x:12,y:6}, {x:13,y:6}, 
-    // YELLOW (Starts 13,8)
     {x:13,y:8}, {x:12,y:8}, {x:11,y:8}, {x:10,y:8}, {x:9,y:8}, 
     {x:8,y:9}, {x:8,y:10}, {x:8,y:11}, {x:8,y:12}, {x:8,y:13}, 
-    // BLUE (Starts 6,13)
     {x:6,y:13}, {x:6,y:12}, {x:6,y:11}, {x:6,y:10}, {x:6,y:9}, 
     {x:5,y:8}, {x:4,y:8}, {x:3,y:8}, {x:2,y:8}, {x:1,y:8}      
 ];
 
-// Safe Zones
 const SAFE_INDICES_GLOBAL = [0, 10, 20, 30, 2, 12, 22, 32, 8, 18, 28, 38];
 
-// Home Runs - CORRECTED TO 5 TILES (Reduced by 1 step so final move goes to Center)
 const HOME_PATHS = [
-    [{x:1,y:7}, {x:2,y:7}, {x:3,y:7}, {x:4,y:7}, {x:5,y:7}], // Red (Stop at x=5)
-    [{x:7,y:1}, {x:7,y:2}, {x:7,y:3}, {x:7,y:4}, {x:7,y:5}], // Green (Stop at y=5)
-    [{x:13,y:7}, {x:12,y:7}, {x:11,y:7}, {x:10,y:7}, {x:9,y:7}], // Yellow (Stop at x=9)
-    [{x:7,y:13}, {x:7,y:12}, {x:7,y:11}, {x:7,y:10}, {x:7,y:9}]  // Blue (Stop at y=9)
+    [{x:1,y:7}, {x:2,y:7}, {x:3,y:7}, {x:4,y:7}, {x:5,y:7}],
+    [{x:7,y:1}, {x:7,y:2}, {x:7,y:3}, {x:7,y:4}, {x:7,y:5}],
+    [{x:13,y:7}, {x:12,y:7}, {x:11,y:7}, {x:10,y:7}, {x:9,y:7}],
+    [{x:7,y:13}, {x:7,y:12}, {x:7,y:11}, {x:7,y:10}, {x:7,y:9}]
 ];
 
-// Game State
 let state = {
     turn: 0,
     dice: null, 
@@ -217,7 +331,6 @@ let state = {
 };
 
 const canvas = document.getElementById('ludoBoard');
-// keep displayed CSS size = canvas pixel size and enable crisp high-DPI rendering
 canvas.style.width = canvas.width + 'px';
 canvas.style.height = canvas.height + 'px';
 const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -234,9 +347,6 @@ const playerText = document.getElementById('playerText');
 const playerDot = document.getElementById('playerDot');
 const gameLog = document.getElementById('gameLog');
 
-/**
- * DICE LOGIC (Weighted)
- */
 function weightedDice() {
     const pool = [
         {v:1,w:45},{v:2,w:45},{v:3,w:45},{v:4,w:45},{v:5,w:45},
@@ -256,9 +366,6 @@ function parseDice(val) {
     return val;
 }
 
-/**
- * INIT
- */
 function initGame() {
     state.turn = 0;
     state.dice = null;
@@ -266,11 +373,6 @@ function initGame() {
     state.winner = null;
     state.pieces = [];
 
-    // status logic:
-    // -1: Base
-    // 0-39: Main Path
-    // 40-44: Home Path (Colored Tiles)
-    // 45: Center (WON)
     for(let p=0; p<4; p++) {
         let playerTokens = [];
         for(let t=0; t<4; t++) {
@@ -296,18 +398,22 @@ function updateUI() {
     }
 }
 
-/**
- * GAMEPLAY LOGIC
- */
-function rollDice() {
+async function rollDice() {
     if(state.animating || state.dice !== null) return;
-    
+
+    // Unlock audio context on purposeful user action
+    ensureAudioContext();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
+
     const rawVal = weightedDice();
     state.dice = rawVal;
     
     diceDisplay.innerText = rawVal;
     diceDisplay.style.color = PLAYERS[state.turn].color;
     log(`${PLAYERS[state.turn].name} rolled ${rawVal}`);
+
+    // sound for rolling
+    playSound('roll');
 
     const val = parseDice(rawVal);
 
@@ -334,16 +440,12 @@ function rollDice() {
 function getValidMoves(pIdx, roll) {
     let moves = [];
     state.pieces[pIdx].forEach((token, idx) => {
-        // Exit Base
         if (token.status === -1) {
             if (roll === 6) moves.push({tokenIdx: idx, target: 0});
         } 
-        // Track
-        else if (token.status < 45) { // Can still move if not yet at 45
+        else if (token.status < 45) {
             let nextPos = token.pathPos + roll;
-            if (nextPos < 0) return; // Prevent backwards into void
-            
-            // WIN CONDITION IS REACHING 45 EXACTLY OR LESS
+            if (nextPos < 0) return;
             if (nextPos <= 45) {
                 moves.push({tokenIdx: idx, target: nextPos});
             }
@@ -353,26 +455,19 @@ function getValidMoves(pIdx, roll) {
 }
 
 function getCoords(pIdx, pathPos) {
-    // 1. In Base
     if (pathPos === -1) {
         const base = PLAYERS[pIdx].startBase;
         return {x: base.x + 0.5, y: base.y + 0.5}; 
     }
-
-    // 2. Main Path (0 to 39 steps)
     if (pathPos < 40) {
         let globalIdx = (PLAYERS[pIdx].startPathIdx + pathPos) % 40;
-        if(!GLOBAL_PATH[globalIdx]) return {x:7.5,y:7.5}; // Failsafe
+        if(!GLOBAL_PATH[globalIdx]) return {x:7.5,y:7.5};
         return GLOBAL_PATH[globalIdx];
     }
-
-    // 3. Home Straight (40 to 44) - The 5 colored tiles
     if (pathPos >= 40 && pathPos <= 44) {
         let homeIdx = pathPos - 40;
         return HOME_PATHS[pIdx][homeIdx] || {x:7.5,y:7.5};
     }
-    
-    // 4. Won (45 and above) -> CENTER
     return {x: 7.5, y: 7.5}; 
 }
 
@@ -392,30 +487,31 @@ async function movePiece(pIdx, tIdx, steps) {
         const startPos = token.pathPos;
         const endPos = startPos + steps;
 
-        // Animation Loop
         if (steps > 0) {
             for (let i = startPos + 1; i <= endPos; i++) {
                 token.pathPos = i;
                 token.status = i;
                 drawBoard();
+                // play step sound
+                playSound('move');
                 await sleep(150); 
             }
         } else {
-            // Backward move logic
             for (let i = startPos - 1; i >= endPos; i--) {
                 token.pathPos = i;
                 token.status = i;
                 drawBoard();
+                playSound('move');
                 await sleep(150); 
             }
         }
         
-        // Finalize
-        if (token.pathPos === 45) { // 45 is now the Winning Step (Center)
+        if (token.pathPos === 45) {
             log("Piece Finished!");
             if(state.pieces[pIdx].every(t => t.pathPos === 45)) {
                 state.winner = pIdx;
                 drawBoard();
+                playSound('win');
                 alert(PLAYERS[pIdx].name + " Wins!");
                 state.animating = false;
                 return;
@@ -425,7 +521,6 @@ async function movePiece(pIdx, tIdx, steps) {
         }
     }
 
-    // Bonus turn
     if (steps === 6 && state.dice === 6 && state.winner === null) {
         log("Rolled 6 - Roll Again!");
         state.animating = false;
@@ -440,22 +535,19 @@ async function movePiece(pIdx, tIdx, steps) {
 
 function checkCollision(pIdx, token) {
     const myPosLocal = token.pathPos;
-    // Safety check: Cannot capture in Home Straight or Base
     if (myPosLocal > 39 || myPosLocal < 0) return; 
-
     const myGlobalIdx = (PLAYERS[pIdx].startPathIdx + myPosLocal) % 40;
-
     if (SAFE_INDICES_GLOBAL.includes(myGlobalIdx)) return; 
 
     PLAYERS.forEach((opp, oppIdx) => {
         if (oppIdx === pIdx) return; 
-
         state.pieces[oppIdx].forEach((oppToken) => {
             if (oppToken.status !== -1 && oppToken.pathPos <= 39) {
                 const oppGlobal = (PLAYERS[oppIdx].startPathIdx + oppToken.pathPos) % 40;
-                
                 if (myGlobalIdx === oppGlobal) {
                     log(`${PLAYERS[pIdx].name} eliminated ${PLAYERS[oppIdx].name}!`);
+                    // sound: capture
+                    playSound('capture');
                     returnTokenToBase(oppIdx, oppToken);
                 }
             }
@@ -484,7 +576,6 @@ function log(msg) {
     gameLog.prepend(div);
 }
 
-// Click Handler
 canvas.addEventListener('click', (e) => {
     if (state.dice === null || state.animating) return;
 
@@ -515,26 +606,22 @@ canvas.addEventListener('click', (e) => {
         const dist = Math.sqrt((x-px)**2 + (y-py)**2);
         if (dist < CELL_SIZE/2) {
             instruction.innerText = "Moving...";
+            playSound('click'); // click sound on selecting token
             movePiece(state.turn, move.tokenIdx, val);
             return;
         }
     }
 });
 
-/**
- * DRAWING
- */
 function drawBoard() {
     try {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // 1. Draw Bases
         drawBase(0, 0, PLAYERS[0].color); 
         drawBase(9, 0, PLAYERS[1].color); 
         drawBase(0, 9, PLAYERS[3].color); 
         drawBase(9, 9, PLAYERS[2].color); 
 
-        // 2. Draw Grid & Path
         ctx.lineWidth = 1;
         ctx.strokeStyle = "#7f8c8d";
         
@@ -554,7 +641,6 @@ function drawBoard() {
             ctx.fillText("★", cx, cy);
         }
 
-        // Draw Global Path
         GLOBAL_PATH.forEach((pt, idx) => {
             let color = "white";
             if(idx === 0) color = PLAYERS[0].color;
@@ -569,13 +655,11 @@ function drawBoard() {
             }
         });
 
-        // Draw Arrows for Diagonals
         drawArrow(6, 1, 8, 1); 
         drawArrow(13, 6, 13, 8); 
         drawArrow(8, 13, 6, 13); 
         drawArrow(1, 8, 1, 6); 
 
-        // Draw Home Straights (Now only 5 tiles long)
         HOME_PATHS[0].forEach(pt => fillCell(pt.x, pt.y, PLAYERS[0].color));
         HOME_PATHS[1].forEach(pt => fillCell(pt.x, pt.y, PLAYERS[1].color));
         HOME_PATHS[2].forEach(pt => fillCell(pt.x, pt.y, PLAYERS[2].color));
@@ -661,7 +745,6 @@ function drawPieces() {
             ctx.shadowBlur = 0;
             ctx.lineWidth = 2; ctx.strokeStyle = 'white'; ctx.stroke();
 
-            // Highlight possible moves
             if (state.turn === pIdx && !state.animating && state.dice !== null) {
                 const val = parseDice(state.dice);
                 if(val === 0) return;
@@ -675,10 +758,17 @@ function drawPieces() {
     });
 }
 
-rollBtn.addEventListener('click', rollDice);
-resetBtn.addEventListener('click', initGame);
+rollBtn.addEventListener('click', (e) => {
+    playSound('click');
+    rollDice();
+});
+resetBtn.addEventListener('click', (e) => {
+    playSound('click');
+    initGame();
+});
 initGame();
 </script>
+
 <!-- BOTTOM ad placeholder -->
 <div class="ad-holder" style="text-align:center; margin:10px 0; max-width:980px;">
   <ins class="adsbygoogle" 
@@ -692,3 +782,4 @@ initGame();
 
 </body>
 </html>
+
